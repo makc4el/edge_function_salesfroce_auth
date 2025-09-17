@@ -33,5 +33,8 @@ port = 54322
 # Path to the edge functions in your repository.
 # Can be overridden by setting the SUPABASE_EDGE_FUNCTIONS_PATH environment variable.
 
+[functions.callback]
+verify_jwt = false
+
 [storage]
 enabled = true

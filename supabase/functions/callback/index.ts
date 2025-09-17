@@ -80,18 +80,47 @@ serve(async (req) => {
   }
 
   try {
-    console.log('🔄 Callback endpoint hit')
+    console.log(`🔄 Callback endpoint hit - ${req.method} request`)
 
-    // Parse the incoming data
-    const requestData = await req.json() as CallbackRequestData[]
-    
-    console.log('📝 Raw callback data received:', requestData)
+    let callbackData: CallbackRequestData
 
-    // Extract the first item from the array
-    const callbackData = requestData[0]
-    
-    if (!callbackData) {
-      throw new Error('No callback data received')
+    if (req.method === 'GET') {
+      // Handle GET request (direct OAuth redirect from Salesforce)
+      const url = new URL(req.url)
+      const queryParams: Record<string, string> = {}
+      
+      // Extract all query parameters
+      for (const [key, value] of url.searchParams.entries()) {
+        queryParams[key] = value
+      }
+      
+      console.log('📝 GET request query parameters:', queryParams)
+      
+      callbackData = {
+        method: 'GET',
+        url: req.url,
+        query: queryParams as SalesforceOAuthQuery,
+        headers: {
+          referer: req.headers.get('referer') || undefined,
+          'user-agent': req.headers.get('user-agent') || undefined,
+        },
+        timestamp: new Date().toISOString()
+      }
+    } else if (req.method === 'POST') {
+      // Handle POST request (API call with JSON data)
+      try {
+        const requestData: CallbackRequestData[] = await req.json() as CallbackRequestData[]
+        console.log('📝 POST request JSON data:', requestData)
+        
+        callbackData = requestData[0]
+        if (!callbackData) {
+          throw new Error('No callback data received in POST body')
+        }
+      } catch (jsonError) {
+        throw new Error(`Invalid JSON in POST request: ${jsonError instanceof Error ? jsonError.message : 'Unknown error'}`)
+      }
+    } else {
+      throw new Error(`Unsupported HTTP method: ${req.method}. Only GET and POST are supported.`)
     }
 
     // Check if we have query parameters
@@ -101,10 +130,11 @@ serve(async (req) => {
 
     // Check for OAuth errors first
     if (isSalesforceOAuthError(callbackData.query)) {
+      const oauthError = callbackData.query;
       const errorResponse: CallbackErrorResponse = {
-        error: callbackData.query.error,
-        error_description: callbackData.query.error_description,
-        details: `OAuth error: ${callbackData.query.error}${callbackData.query.error_description ? ' - ' + callbackData.query.error_description : ''}`
+        error: oauthError.error,
+        error_description: oauthError.error_description,
+        details: `OAuth error: ${oauthError.error}${oauthError.error_description ? ' - ' + oauthError.error_description : ''}`
       }
       
       console.log('❌ OAuth error received:', errorResponse)
@@ -120,14 +150,15 @@ serve(async (req) => {
 
     // Handle successful OAuth callback
     if (isSalesforceOAuthSuccess(callbackData.query)) {
-      const { code: authCode, state, scope } = callbackData.query
+      const oauthSuccess = callbackData.query;
+      const { code: authCode, state, scope } = oauthSuccess
       
       // Extract instance URL from multiple sources
       let instanceUrl: string = "https://orgfarm-a3ae3ef50e-dev-ed.develop.lightning.force.com/"
       
       // Priority 1: Direct instance_url from query params
-      if (callbackData.query.instance_url) {
-        instanceUrl = callbackData.query.instance_url
+      if (oauthSuccess.instance_url) {
+        instanceUrl = oauthSuccess.instance_url
         // Ensure trailing slash
         if (!instanceUrl.endsWith('/')) {
           instanceUrl += '/'
@@ -168,7 +199,7 @@ serve(async (req) => {
     }
 
     // If we get here, the query parameters don't match expected OAuth format
-    throw new Error('Invalid OAuth callback format - missing required parameters')
+    throw new Error('Invalid OAuth callback format - missing required parameters. Expected either "code" for success or "error" for failure.')
 
 
   } catch (error) {
