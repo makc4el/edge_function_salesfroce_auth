@@ -1,0 +1,37 @@
+# A string used to distinguish different Supabase projects on the same host.
+project_id = "salesforce-auth-layer"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[auth]
+enabled = true
+# The base URL of your website
+site_url = "http://localhost:3000"
+# A list of *exact* URLs that auth providers are permitted to redirect to post authentication
+additional_redirect_urls = ["https://localhost:3000"]
+# How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604800 (1 week).
+jwt_expiry = 3600
+# If disabled, the refresh token will never expire.
+enable_refresh_token_rotation = true
+# Allows refresh tokens to be reused after expiry, up to the specified interval in seconds.
+refresh_token_reuse_interval = 10
+
+[auth.email]
+# Allow/disallow new user signups via email to your project.
+enable_signup = true
+
+[db]
+# Port to use for the local database URL.
+port = 54322
+
+[functions]
+# Path to the edge functions in your repository.
+# Can be overridden by setting the SUPABASE_EDGE_FUNCTIONS_PATH environment variable.
+
+[storage]
+enabled = true

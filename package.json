@@ -1,0 +1,31 @@
+{
+  "name": "salesforce-auth-layer",
+  "version": "1.0.0",
+  "description": "Supabase Edge Functions for Salesforce Authentication Layer",
+  "main": "index.js",
+  "scripts": {
+    "start": "supabase start",
+    "stop": "supabase stop",
+    "deploy": "supabase functions deploy",
+    "deploy:salesforce-auth": "supabase functions deploy salesforce-auth",
+    "deploy:callback": "supabase functions deploy callback",
+    "deploy:all": "supabase functions deploy salesforce-auth && supabase functions deploy callback",
+    "serve": "supabase functions serve",
+    "logs": "supabase functions logs",
+    "logs:callback": "supabase functions logs callback",
+    "test": "supabase functions serve --no-verify-jwt",
+    "test:callback": "chmod +x test-callback.sh && ./test-callback.sh"
+  },
+  "keywords": [
+    "supabase",
+    "edge-functions",
+    "salesforce",
+    "authentication",
+    "deno"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^18.0.0"
+  }
+}
