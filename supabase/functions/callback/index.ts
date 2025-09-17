@@ -99,7 +99,7 @@ serve(async (req) => {
       callbackData = {
         method: 'GET',
         url: req.url,
-        query: queryParams as SalesforceOAuthQuery,
+        query: queryParams as unknown as SalesforceOAuthQuery,
         headers: {
           referer: req.headers.get('referer') || undefined,
           'user-agent': req.headers.get('user-agent') || undefined,
