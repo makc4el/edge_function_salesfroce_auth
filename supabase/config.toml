@@ -36,5 +36,8 @@ port = 54322
 [functions.callback]
 verify_jwt = false
 
+[functions.refresh-token]
+verify_jwt = false
+
 [storage]
 enabled = true
