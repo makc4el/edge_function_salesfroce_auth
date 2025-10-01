@@ -1,5 +1,6 @@
 // @ts-ignore - Deno module import for Supabase Edge Function
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -98,6 +99,8 @@ interface EnvironmentConfig {
   clientId?: string;
   clientSecret?: string;
   redirectUri?: string;
+  supabaseUrl?: string;
+  supabaseServiceKey?: string;
 }
 
 // Helper function to get environment variables
@@ -105,7 +108,9 @@ function getEnvironmentConfig(): EnvironmentConfig {
   return {
     clientId: Deno.env.get('SALESFORCE_CLIENT_ID'),
     clientSecret: Deno.env.get('SALESFORCE_CLIENT_SECRET'),
-    redirectUri: Deno.env.get('SALESFORCE_REDIRECT_URI') || 'https://prtctipgoioqpytelojf.supabase.co/functions/v1/callback'
+    redirectUri: Deno.env.get('SALESFORCE_REDIRECT_URI') || 'https://prtctipgoioqpytelojf.supabase.co/functions/v1/callback',
+    supabaseUrl: Deno.env.get('SUPABASE_URL'),
+    supabaseServiceKey: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
   };
 }
 
@@ -150,7 +155,7 @@ async function exchangeAuthCodeForToken(authCode: string, instanceUrl: string): 
       'Accept': 'application/json',
       'User-Agent': 'Supabase-Edge-Function/1.0'
     },
-    body: new URLSearchParams(tokenPayload)
+    body: new URLSearchParams(tokenPayload as Record<string, string>)
   });
   
   if (!response.ok) {
@@ -178,6 +183,40 @@ async function exchangeAuthCodeForToken(authCode: string, instanceUrl: string): 
   return tokenData;
 }
 
+// Store response data in Vault using userId as key
+async function storeInVault(userId: string, responseData: any): Promise<void> {
+  const config = getEnvironmentConfig();
+  
+  if (!config.supabaseUrl || !config.supabaseServiceKey) {
+    console.warn('⚠️  Supabase URL or Service Key not configured, skipping vault storage');
+    return;
+  }
+  
+  try {
+    const supabase = createClient(config.supabaseUrl, config.supabaseServiceKey);
+    
+    // Store in a table called 'oauth_responses' (will be created if doesn't exist)
+    const { error } = await supabase
+      .from('oauth_responses')
+      .upsert(
+        { 
+          user_id: userId, 
+          response_data: responseData,
+          updated_at: new Date().toISOString()
+        },
+        { onConflict: 'user_id' }
+      );
+    
+    if (error) {
+      console.error('❌ Failed to store in vault:', error);
+    } else {
+      console.log(`✅ Successfully stored response for userId: ${userId}`);
+    }
+  } catch (vaultError) {
+    console.error('❌ Vault storage error:', vaultError);
+  }
+}
+
 serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
@@ -189,6 +228,8 @@ serve(async (req) => {
 
     let callbackData: CallbackRequestData
 
+    let userId: string | undefined;
+
     if (req.method === 'GET') {
       // Handle GET request (direct OAuth redirect from Salesforce)
       const url = new URL(req.url)
@@ -199,7 +240,13 @@ serve(async (req) => {
         queryParams[key] = value
       }
       
+      // Extract userId from query parameters
+      userId = queryParams.userId;
+      
       console.log('📝 GET request query parameters:', queryParams)
+      if (userId) {
+        console.log('🆔 User ID found:', userId);
+      }
       
       callbackData = {
         method: 'GET',
@@ -220,6 +267,13 @@ serve(async (req) => {
         callbackData = requestData[0]
         if (!callbackData) {
           throw new Error('No callback data received in POST body')
+        }
+        
+        // Extract userId from POST request URL parameters (if available)
+        const url = new URL(req.url)
+        userId = url.searchParams.get('userId') || undefined;
+        if (userId) {
+          console.log('🆔 User ID found from POST URL:', userId);
         }
       } catch (jsonError) {
         throw new Error(`Invalid JSON in POST request: ${jsonError instanceof Error ? jsonError.message : 'Unknown error'}`)
@@ -304,6 +358,13 @@ serve(async (req) => {
         }
         
         console.log('✅ OAuth flow completed successfully with access token!');
+        
+        // Store response data in vault if userId is provided
+        if (userId) {
+          await storeInVault(userId, response);
+        } else {
+          console.log('⚠️  No userId provided, skipping vault storage');
+        }
         
         return new Response(
           JSON.stringify(response, null, 2),
