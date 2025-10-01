@@ -195,17 +195,12 @@ async function storeInVault(stateValue: string, responseData: any): Promise<void
   try {
     const supabase = createClient(config.supabaseUrl, config.supabaseServiceKey);
     
-    // Store in a table called 'oauth_responses' (will be created if doesn't exist)
-    const { error } = await supabase
-      .from('oauth_responses')
-      .upsert(
-        { 
-          state_value: stateValue, 
-          response_data: responseData,
-          updated_at: new Date().toISOString()
-        },
-        { onConflict: 'state_value' }
-      );
+    // Use the existing vault API to store the secret
+    const { error } = await supabase.rpc('create_vault_secret', {
+      secret_id: stateValue,
+      secret: JSON.stringify(responseData),
+      description: `OAuth response for state: ${stateValue}`
+    });
     
     if (error) {
       console.error('❌ Failed to store in vault:', error);
