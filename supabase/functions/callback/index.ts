@@ -183,8 +183,8 @@ async function exchangeAuthCodeForToken(authCode: string, instanceUrl: string): 
   return tokenData;
 }
 
-// Store response data in Vault using userId as key
-async function storeInVault(userId: string, responseData: any): Promise<void> {
+// Store response data in Vault using state parameter as key
+async function storeInVault(stateValue: string, responseData: any): Promise<void> {
   const config = getEnvironmentConfig();
   
   if (!config.supabaseUrl || !config.supabaseServiceKey) {
@@ -200,17 +200,17 @@ async function storeInVault(userId: string, responseData: any): Promise<void> {
       .from('oauth_responses')
       .upsert(
         { 
-          user_id: userId, 
+          state_value: stateValue, 
           response_data: responseData,
           updated_at: new Date().toISOString()
         },
-        { onConflict: 'user_id' }
+        { onConflict: 'state_value' }
       );
     
     if (error) {
       console.error('❌ Failed to store in vault:', error);
     } else {
-      console.log(`✅ Successfully stored response for userId: ${userId}`);
+      console.log(`✅ Successfully stored response for state: ${stateValue}`);
     }
   } catch (vaultError) {
     console.error('❌ Vault storage error:', vaultError);
@@ -228,7 +228,7 @@ serve(async (req) => {
 
     let callbackData: CallbackRequestData
 
-    let userId: string | undefined;
+    let stateValue: string | undefined;
 
     if (req.method === 'GET') {
       // Handle GET request (direct OAuth redirect from Salesforce)
@@ -240,12 +240,12 @@ serve(async (req) => {
         queryParams[key] = value
       }
       
-      // Extract userId from query parameters
-      userId = queryParams.userId;
+      // Extract state from query parameters
+      stateValue = queryParams.state;
       
       console.log('📝 GET request query parameters:', queryParams)
-      if (userId) {
-        console.log('🆔 User ID found:', userId);
+      if (stateValue) {
+        console.log('🔑 State parameter found:', stateValue);
       }
       
       callbackData = {
@@ -269,11 +269,11 @@ serve(async (req) => {
           throw new Error('No callback data received in POST body')
         }
         
-        // Extract userId from POST request URL parameters (if available)
+        // Extract state from POST request URL parameters (if available)
         const url = new URL(req.url)
-        userId = url.searchParams.get('userId') || undefined;
-        if (userId) {
-          console.log('🆔 User ID found from POST URL:', userId);
+        stateValue = url.searchParams.get('state') || undefined;
+        if (stateValue) {
+          console.log('🔑 State parameter found from POST URL:', stateValue);
         }
       } catch (jsonError) {
         throw new Error(`Invalid JSON in POST request: ${jsonError instanceof Error ? jsonError.message : 'Unknown error'}`)
@@ -359,11 +359,11 @@ serve(async (req) => {
         
         console.log('✅ OAuth flow completed successfully with access token!');
         
-        // Store response data in vault if userId is provided
-        if (userId) {
-          await storeInVault(userId, response);
+        // Store response data in vault if state parameter is provided
+        if (stateValue) {
+          await storeInVault(stateValue, response);
         } else {
-          console.log('⚠️  No userId provided, skipping vault storage');
+          console.log('⚠️  No state parameter provided, skipping vault storage');
         }
         
         return new Response(
