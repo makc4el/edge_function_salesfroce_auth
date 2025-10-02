@@ -101,6 +101,7 @@ interface EnvironmentConfig {
   redirectUri?: string;
   supabaseUrl?: string;
   supabaseServiceKey?: string;
+  appRedirectUrl?: string;
 }
 
 // Helper function to get environment variables
@@ -110,7 +111,8 @@ function getEnvironmentConfig(): EnvironmentConfig {
     clientSecret: Deno.env.get('SALESFORCE_CLIENT_SECRET'),
     redirectUri: Deno.env.get('SALESFORCE_REDIRECT_URI') || 'https://prtctipgoioqpytelojf.supabase.co/functions/v1/callback',
     supabaseUrl: Deno.env.get('SUPABASE_URL'),
-    supabaseServiceKey: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    supabaseServiceKey: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'),
+    appRedirectUrl: Deno.env.get('APP_REDIRECT_URL')
   };
 }
 
@@ -364,6 +366,20 @@ serve(async (req) => {
           console.log('⚠️  No state parameter provided, skipping vault storage');
         }
         
+        // Check if we should redirect to application URL
+        const config = getEnvironmentConfig();
+        if (config.appRedirectUrl) {
+          console.log(`🔄 Redirecting to application: ${config.appRedirectUrl}`);
+          return new Response(null, {
+            status: 302,
+            headers: {
+              ...corsHeaders,
+              'Location': config.appRedirectUrl
+            }
+          });
+        }
+        
+        // Return JSON response if no redirect URL is configured
         return new Response(
           JSON.stringify(response, null, 2),
           { 
