@@ -146,7 +146,10 @@ async function exchangeAuthCodeForToken(authCode: string, instanceUrl: string): 
   console.log('🔄 Exchanging authorization code for access token');
   console.log(`   Token endpoint: ${tokenEndpoint}`);
   console.log(`   Client ID: ${config.clientId}`);
+  console.log(`   Client Secret: ${config.clientSecret ? 'Set' : 'Missing'}`);
   console.log(`   Redirect URI: ${config.redirectUri}`);
+  console.log(`   Auth Code: ${authCode.substring(0, 20)}...`);
+  console.log(`   Grant Type: authorization_code`);
   
   const response = await fetch(tokenEndpoint, {
     method: 'POST',
