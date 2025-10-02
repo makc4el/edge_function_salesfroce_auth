@@ -1,5 +1,6 @@
 // @ts-ignore - Deno module import for Supabase Edge Function
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -52,6 +53,8 @@ interface TokenRefreshErrorResponse {
 interface EnvironmentConfig {
   clientId?: string;
   clientSecret?: string;
+  supabaseUrl?: string;
+  supabaseServiceKey?: string;
 }
 
 // Helper function to get environment variables
@@ -59,6 +62,8 @@ function getEnvironmentConfig(): EnvironmentConfig {
   return {
     clientId: Deno.env.get('SALESFORCE_CLIENT_ID'),
     clientSecret: Deno.env.get('SALESFORCE_CLIENT_SECRET'),
+    supabaseUrl: Deno.env.get('SUPABASE_URL'),
+    supabaseServiceKey: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
   };
 }
 
@@ -130,6 +135,69 @@ async function refreshAccessToken(refreshToken: string, instanceUrl: string): Pr
   return tokenData;
 }
 
+// Read OAuth data from vault using userId as key
+async function readFromVault(userId: string): Promise<any> {
+  const config = getEnvironmentConfig();
+  
+  if (!config.supabaseUrl || !config.supabaseServiceKey) {
+    throw new Error('Supabase URL or Service Key not configured for vault operations');
+  }
+  
+  try {
+    const supabase = createClient(config.supabaseUrl, config.supabaseServiceKey);
+    
+    const { data, error } = await supabase.rpc('read_vault_secret', {
+      secret_name: userId
+    });
+    
+    if (error) {
+      console.error('❌ Failed to read from vault:', error);
+      throw new Error(`Failed to read from vault: ${error.message}`);
+    }
+    
+    if (!data || !data.secret) {
+      throw new Error(`No data found in vault for userId: ${userId}`);
+    }
+    
+    // Parse the stored JSON data
+    const oauthData = JSON.parse(data.secret);
+    console.log(`✅ Successfully retrieved OAuth data for userId: ${userId}`);
+    return oauthData;
+  } catch (vaultError) {
+    console.error('❌ Vault read error:', vaultError);
+    throw vaultError;
+  }
+}
+
+// Update vault with refreshed tokens using same userId key
+async function updateVault(userId: string, refreshedData: any): Promise<void> {
+  const config = getEnvironmentConfig();
+  
+  if (!config.supabaseUrl || !config.supabaseServiceKey) {
+    throw new Error('Supabase URL or Service Key not configured for vault operations');
+  }
+  
+  try {
+    const supabase = createClient(config.supabaseUrl, config.supabaseServiceKey);
+    
+    const { error } = await supabase.rpc('update_vault_secret', {
+      secret_id: userId,
+      secret: JSON.stringify(refreshedData),
+      description: `Refreshed OAuth response for userId: ${userId}`
+    });
+    
+    if (error) {
+      console.error('❌ Failed to update vault:', error);
+      throw new Error(`Failed to update vault: ${error.message}`);
+    }
+    
+    console.log(`✅ Successfully updated vault for userId: ${userId}`);
+  } catch (vaultError) {
+    console.error('❌ Vault update error:', vaultError);
+    throw vaultError;
+  }
+}
+
 serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
@@ -139,43 +207,71 @@ serve(async (req) => {
   try {
     console.log(`🔄 Token refresh endpoint hit - ${req.method} request`)
 
-    if (req.method !== 'POST') {
-      throw new Error(`Unsupported HTTP method: ${req.method}. Only POST is supported.`)
-    }
-
-    // Parse request body
-    let tokenData: TokenRefreshRequest;
-    try {
-      tokenData = await req.json() as TokenRefreshRequest;
-      console.log('📝 Token refresh request data received');
-    } catch (jsonError) {
-      throw new Error(`Invalid JSON in request: ${jsonError instanceof Error ? jsonError.message : 'Unknown error'}`)
-    }
-
-    // Validate required fields
-    if (!tokenData.refreshToken) {
-      throw new Error('Missing required field: refreshToken');
+    // Extract userId from query parameters
+    const url = new URL(req.url);
+    const userId = url.searchParams.get('userId');
+    
+    if (!userId) {
+      throw new Error('Missing required parameter: userId');
     }
     
-    if (!tokenData.instanceUrl) {
-      throw new Error('Missing required field: instanceUrl');
+    console.log(`🆔 User ID: ${userId}`);
+
+    // Read OAuth data from vault using userId as key
+    let oauthData: any;
+    try {
+      oauthData = await readFromVault(userId);
+      console.log('📝 OAuth data retrieved from vault');
+    } catch (vaultError) {
+      throw new Error(`Failed to read OAuth data from vault: ${vaultError instanceof Error ? vaultError.message : 'Unknown vault error'}`);
+    }
+
+    // Validate required fields from vault data
+    if (!oauthData.refreshToken) {
+      throw new Error('Missing refreshToken in vault data');
+    }
+    
+    if (!oauthData.instanceUrl) {
+      throw new Error('Missing instanceUrl in vault data');
     }
 
     try {
-      // Refresh the access token
-      const refreshedTokens = await refreshAccessToken(tokenData.refreshToken, tokenData.instanceUrl);
+      // Refresh the access token using data from vault
+      const refreshedTokens = await refreshAccessToken(oauthData.refreshToken, oauthData.instanceUrl);
       
-      // Return the updated token data in the same format as input
-      const response: TokenRefreshSuccessResponse = {
+      // Create updated OAuth data with refreshed tokens
+      const updatedOauthData = {
+        ...oauthData, // Keep all existing data
         instanceUrl: refreshedTokens.instance_url,
         accessToken: refreshedTokens.access_token,
         tokenType: refreshedTokens.token_type,
-        refreshToken: tokenData.refreshToken, // Keep the same refresh token
         expiresIn: refreshedTokens.expires_in,
         ...(refreshedTokens.scope && { scope: refreshedTokens.scope }),
-        ...(refreshedTokens.issued_at && { issuedAt: refreshedTokens.issued_at }),
-        // Keep original fields if they were provided
-        ...(tokenData.authCode && { authCode: tokenData.authCode })
+        ...(refreshedTokens.issued_at && { issuedAt: refreshedTokens.issued_at })
+      };
+      
+      // Update vault with refreshed tokens
+      await updateVault(userId, updatedOauthData);
+      
+      // Print new credentials
+      console.log('🎉 NEW CREDENTIALS:');
+      console.log(`   User ID: ${userId}`);
+      console.log(`   Instance URL: ${updatedOauthData.instanceUrl}`);
+      console.log(`   Access Token: ${updatedOauthData.accessToken.substring(0, 30)}...`);
+      console.log(`   Token Type: ${updatedOauthData.tokenType}`);
+      console.log(`   Expires In: ${updatedOauthData.expiresIn} seconds`);
+      console.log(`   Refresh Token: ${updatedOauthData.refreshToken.substring(0, 30)}...`);
+      
+      // Return the updated token data
+      const response: TokenRefreshSuccessResponse = {
+        instanceUrl: updatedOauthData.instanceUrl,
+        accessToken: updatedOauthData.accessToken,
+        tokenType: updatedOauthData.tokenType,
+        refreshToken: updatedOauthData.refreshToken,
+        expiresIn: updatedOauthData.expiresIn,
+        ...(updatedOauthData.scope && { scope: updatedOauthData.scope }),
+        ...(updatedOauthData.issuedAt && { issuedAt: updatedOauthData.issuedAt }),
+        ...(updatedOauthData.authCode && { authCode: updatedOauthData.authCode })
       }
       
       console.log('✅ Token refresh completed successfully!');
@@ -226,4 +322,4 @@ serve(async (req) => {
 })
 
 console.log('🚀 Salesforce Token Refresh Function is ready!')
-console.log('📡 Expecting POST with: { instanceUrl, accessToken, tokenType, refreshToken, scope?, authCode? }')
+console.log('📡 Expecting GET with userId parameter: /refresh-token?userId=your-user-id')
