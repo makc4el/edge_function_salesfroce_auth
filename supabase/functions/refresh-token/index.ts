@@ -23,6 +23,7 @@ interface SalesforceRefreshResponse {
   instance_url: string;
   token_type: string;
   expires_in: number;
+  refresh_token?: string; // Optional - Salesforce may or may not return a new refresh token
   scope?: string;
   id?: string;
   signature?: string;
@@ -131,6 +132,7 @@ async function refreshAccessToken(refreshToken: string, instanceUrl: string): Pr
   console.log(`   Instance URL: ${tokenData.instance_url}`);
   console.log(`   Token Type: ${tokenData.token_type}`);
   console.log(`   Expires In: ${tokenData.expires_in} seconds`);
+  console.log(`   Full Salesforce Response:`, JSON.stringify(tokenData, null, 2));
   
   return tokenData;
 }
@@ -144,23 +146,35 @@ async function readFromVault(userId: string): Promise<any> {
   }
   
   try {
+    console.log('🔧 Environment check:');
+    console.log(`   Supabase URL: ${config.supabaseUrl ? 'Set' : 'Missing'}`);
+    console.log(`   Service Key: ${config.supabaseServiceKey ? 'Set' : 'Missing'}`);
+    
     const supabase = createClient(config.supabaseUrl, config.supabaseServiceKey);
     
+    console.log('🔍 Attempting to read from vault...');
+    console.log(`   User ID: ${userId}`);
+    
+    // Try to read the secret using the userId as the secret name
     const { data, error } = await supabase.rpc('read_vault_secret', {
       secret_name: userId
     });
     
     if (error) {
       console.error('❌ Failed to read from vault:', error);
+      console.error('❌ Error details:', JSON.stringify(error, null, 2));
       throw new Error(`Failed to read from vault: ${error.message}`);
     }
     
-    if (!data || !data.secret) {
+    console.log('📝 Vault read response:', JSON.stringify(data, null, 2));
+    
+    // The vault API returns the data directly as a JSON string, not wrapped in a 'secret' property
+    if (!data) {
       throw new Error(`No data found in vault for userId: ${userId}`);
     }
     
-    // Parse the stored JSON data
-    const oauthData = JSON.parse(data.secret);
+    // Parse the stored JSON data directly
+    const oauthData = JSON.parse(data);
     console.log(`✅ Successfully retrieved OAuth data for userId: ${userId}`);
     return oauthData;
   } catch (vaultError) {
@@ -246,6 +260,8 @@ serve(async (req) => {
         accessToken: refreshedTokens.access_token,
         tokenType: refreshedTokens.token_type,
         expiresIn: refreshedTokens.expires_in,
+        // Update refresh token if Salesforce returned a new one
+        ...(refreshedTokens.refresh_token && { refreshToken: refreshedTokens.refresh_token }),
         ...(refreshedTokens.scope && { scope: refreshedTokens.scope }),
         ...(refreshedTokens.issued_at && { issuedAt: refreshedTokens.issued_at })
       };
